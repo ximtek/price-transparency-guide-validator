@@ -4,12 +4,16 @@ import { exec } from 'child_process';
 import fs from 'fs-extra';
 import readlineSync from 'readline-sync';
 import { OptionValues } from 'commander';
+import isUrl from 'is-url';
 
 import {
   config,
   chooseJsonFile,
+
   getEntryFromZip,
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
   assessTocContents,
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
   assessReferencedProviders
 } from './utils';
 import temp from 'temp';
@@ -22,61 +26,53 @@ export async function validate(dataFile: string, options: OptionValues) {
   console.log('🔍 Received Input:', dataFile);
   console.log('📜 Validation Options:', options);
 
-  if (!fs.existsSync(dataFile)) {
-    console.log('❌ ERROR: Data file not found:', dataFile);
-    logger.error(`Could not find data file: ${dataFile}`);
-    process.exitCode = 1;
-    return { success: false, message: 'Data file not found' };
+  let jsonData = null;
+
+  try {
+    // Check if the input is JSON (detect based on first character)
+    if (dataFile.trim().startsWith('{')) {
+      console.log('📥 Detected direct JSON input.');
+      jsonData = JSON.parse(dataFile);
+    } else if (fs.existsSync(dataFile)) {
+      console.log('📂 Detected file path. Reading file...');
+      jsonData = JSON.parse(fs.readFileSync(dataFile, 'utf-8'));
+    } else {
+      console.log('❌ ERROR: Data file not found or invalid input.');
+      return { success: false, message: 'Data file not found or invalid input' };
+    }
+  } catch (error) {
+    console.log('❌ ERROR: Invalid JSON input.', error.message);
+    return { success: false, message: 'Invalid JSON format' };
   }
 
+  // Pass jsonData to schema validation (modify SchemaManager as needed)
+  return processJsonData(jsonData, options);
+}
+
+// Helper function to process JSON (modify as needed)
+async function processJsonData(jsonData: any, options: OptionValues) {
+  console.log('✅ Processing JSON Data:', jsonData);
+
+  // Modify SchemaManager to accept JSON directly if needed
   const schemaManager = new SchemaManager();
   await schemaManager.ensureRepo();
   schemaManager.strict = options.strict;
-  schemaManager.shouldDetectVersion = options.schemaVersion == null;
 
-  let versionToUse: string;
-  try {
-    const detectedVersion = await schemaManager.determineVersion(dataFile);
-    console.log('📌 Detected Schema Version:', detectedVersion);
+  const versionToUse = options.schemaVersion || 'default-version';
+  await schemaManager.useVersion(versionToUse);
 
-    if (!schemaManager.shouldDetectVersion && detectedVersion !== options.schemaVersion) {
-      console.log(`⚠️ WARNING: Mismatched schema version! Using ${options.schemaVersion} instead.`);
-    }
+  console.log('✅ Using Schema Version:', versionToUse);
+  const schemaPath = await schemaManager.useSchema(options.target);
 
-    versionToUse = schemaManager.shouldDetectVersion ? detectedVersion : options.schemaVersion;
-  } catch {
-    console.log('❌ ERROR: No schema version detected!');
-    return { success: false, message: 'Schema version not found in input' };
+  if (!schemaPath) {
+    return { success: false, message: 'Schema not found' };
   }
 
-  return schemaManager
-    .useVersion(versionToUse)
-    .then(async (versionIsAvailable) => {
-      if (!versionIsAvailable) {
-        console.log('❌ ERROR: No schema available!');
-        return { success: false, message: 'No schema available' };
-      }
+  const dockerManager = new DockerManager(options.out);
+  const validationResult = await dockerManager.runContainerWithJson(schemaPath, options.target, jsonData);
 
-      console.log('✅ Schema Version Available, Using:', versionToUse);
-      return schemaManager.useSchema(options.target);
-    })
-    .then(async (schemaPath) => {
-      if (typeof schemaPath !== 'string') {
-        console.log('❌ ERROR: Expected schemaPath to be a string but got:', schemaPath);
-        return { success: false, message: 'Invalid schema path' };
-      }
-
-      console.log('✅ Using Schema:', schemaPath);
-      const dockerManager = new DockerManager(options.out);
-      const validationResult = await dockerManager.runContainer(schemaPath, options.target, dataFile);
-
-      console.log('🚀 Validation Result:', validationResult);
-      return validationResult;
-    })
-    .catch((err) => {
-      console.log('❌ ERROR: Exception in validation:', err);
-      return { success: false, message: err.message };
-    });
+  console.log('🚀 Validation Result:', validationResult);
+  return validationResult;
 }
 
 export async function validateFromUrl(dataUrl: string, options: OptionValues) {

@@ -36,10 +36,12 @@ export class DockerManager {
         const outputDir = temp.mkdirSync('output');
         const containerOutputPath = path.join(outputDir, 'output.txt');
         const containerLocationPath = path.join(outputDir, 'locations.json');
-        // copy output files after it finishes
+
+        // build and execute Docker command
         const runCommand = this.buildRunCommand(schemaPath, dataPath, outputDir, schemaName);
         logger.info('Running validator container...');
         logger.debug(runCommand);
+
         return util
           .promisify(exec)(runCommand)
           .then(() => {
@@ -85,6 +87,27 @@ export class DockerManager {
     }
   }
 
+  async runContainerWithJson(schemaPath: string, schemaName: string, jsonData: any): Promise<ContainerResult> {
+    console.log('📥 Received JSON input. Creating temporary file...');
+
+    try {
+      // Create a temporary JSON file
+      temp.track();
+      const tempFile = temp.path({ suffix: '.json' });
+
+      // Write JSON data to temp file
+      fs.writeFileSync(tempFile, JSON.stringify(jsonData, null, 2));
+
+      console.log(`📂 Temporary file created: ${tempFile}`);
+
+      // Run Docker validation on the temp file
+      return this.runContainer(schemaPath, schemaName, tempFile);
+    } catch (error) {
+      logger.error('❌ ERROR: Failed to process JSON input.', error);
+      return { pass: false, text: 'Failed to process JSON input' };
+    }
+  }
+
   buildRunCommand(
     schemaPath: string,
     dataPath: string,
@@ -95,10 +118,12 @@ export class DockerManager {
     const absoluteSchemaPath = path.resolve(schemaPath);
     const schemaDir = path.dirname(absoluteSchemaPath);
     const schemaFile = path.basename(absoluteSchemaPath);
+
     // figure out mount for data file
     const absoluteDataPath = path.resolve(dataPath);
     const dataDir = path.dirname(absoluteDataPath);
     const dataFile = path.basename(absoluteDataPath);
+
     return `docker run --rm -v "${schemaDir}":/schema/ -v "${dataDir}":/data/ -v "${path.resolve(
       outputDir
     )}":/output/ ${

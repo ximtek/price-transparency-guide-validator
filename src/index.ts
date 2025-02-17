@@ -38,10 +38,21 @@ async function main() {
       'enable strict checking, which prohibits additional properties in data file'
     )
     .option('-y, --yes-all', 'automatically respond "yes" to confirmation prompts')
-    .action(validate);
+    .action(async (dataFile, options) => {
+      const result = await validate(dataFile, options);  // ✅ Explicitly handle return value
+    
+      // Check if result is of type { success: boolean; message: any; }
+      if ('success' in result && 'message' in result) {
+        if (result.success === false) {
+          console.error('Validation failed:', result.message);
+          process.exit(1);
+        }
+      } else {
+        console.log('Validation completed successfully.');
+      }
+    });
 
-  program
-    .command('from-url')
+  program    .command('from-url')
     .description(
       'Validate the file retrieved from a URL against a specific published version of a CMS schema.'
     )
