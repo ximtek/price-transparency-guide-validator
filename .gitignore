@@ -6,3 +6,4 @@ coverage
 validator
 .vscode
 .DS_Store
+*.ps1
